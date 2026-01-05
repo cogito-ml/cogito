@@ -55,16 +55,29 @@ set(COGITO_SOURCES
     src/datasets/mnist.c
 )
 
+
 # Create static library
-add_library(cogito STATIC ${COGITO_SOURCES})
+add_library(cogito_static STATIC ${COGITO_SOURCES})
+set_target_properties(cogito_static PROPERTIES OUTPUT_NAME "cogito")
+
+# Create shared library for bindings
+add_library(cogito SHARED ${COGITO_SOURCES})
+set_target_properties(cogito PROPERTIES 
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+)
+
 
 if(COGITO_USE_BLAS AND BLAS_FOUND)
     target_link_libraries(cogito ${BLAS_LIBRARIES})
+    target_link_libraries(cogito_static ${BLAS_LIBRARIES})
 endif()
 
 # Math library (only needed on Unix - MSVC includes it in standard library)
 if(UNIX)
     target_link_libraries(cogito m)
+    target_link_libraries(cogito_static m)
 endif()
 
 # Examples
