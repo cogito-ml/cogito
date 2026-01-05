@@ -41,6 +41,11 @@ set(COGITO_SOURCES
     src/core/symbolic.c
     src/core/bf16.c
     src/jit/graph_capture.c
+    src/jit/fusion.c
+    src/attention/flash_attn.c
+    src/memory/planner.c
+    src/quantize/int4.c
+    src/inference/speculative.c
     src/layers/linear.c
     src/layers/activations.c
     src/layers/conv2d.c
