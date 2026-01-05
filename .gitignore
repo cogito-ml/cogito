@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+*.lib
+*.exe
+*.obj
+*.pdb
+*.ilk
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.vcxproj*
+*.sln
+
+# IDE
+.vs/
+.vscode/
+
+# Data
+*.idx*-ubyte
+data/
