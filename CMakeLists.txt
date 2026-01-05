@@ -38,6 +38,9 @@ set(COGITO_SOURCES
     src/core/autograd.c
     src/core/graph.c
     src/core/broadcast.c
+    src/core/symbolic.c
+    src/core/bf16.c
+    src/jit/graph_capture.c
     src/layers/linear.c
     src/layers/activations.c
     src/layers/conv2d.c

@@ -16,6 +16,10 @@
 #include "cg_optim.h"
 #include "cg_loss.h"
 #include "cg_datasets.h"
+#include "cg_jit.h"
+#include "cg_symbolic.h"
+#include "cg_bf16.h"
+#include "cg_pipeline.h"
 
 /* Version information */
 #define COGITO_VERSION_MAJOR 0
