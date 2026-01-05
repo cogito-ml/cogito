@@ -174,6 +174,44 @@ cg_batchnorm* cg_batchnorm_new(int num_features, float epsilon, float momentum);
 void cg_batchnorm_set_training(cg_batchnorm* layer, bool training);
 
 /*============================================================================
+ * CONV2D LAYER
+ *============================================================================*/
+
+/**
+ * 2D Convolution layer with im2col optimization.
+ * Input: (N, C_in, H, W)
+ * Output: (N, C_out, H', W')
+ */
+typedef struct cg_conv2d cg_conv2d;
+
+cg_conv2d* cg_conv2d_new(int in_channels, int out_channels, 
+                         int kernel_size, int stride, int padding, bool use_bias);
+
+/*============================================================================
+ * MAXPOOL2D LAYER
+ *============================================================================*/
+
+/**
+ * 2D Max Pooling layer.
+ * Input: (N, C, H, W)
+ * Output: (N, C, H/k, W/k)
+ */
+typedef struct cg_maxpool2d cg_maxpool2d;
+
+cg_maxpool2d* cg_maxpool2d_new(int kernel_size, int stride);
+
+/*============================================================================
+ * FLATTEN LAYER
+ *============================================================================*/
+
+/**
+ * Flatten layer: reshapes (N, C, H, W, ...) to (N, features)
+ */
+typedef struct cg_flatten cg_flatten;
+
+cg_flatten* cg_flatten_new(void);
+
+/*============================================================================
  * SEQUENTIAL CONTAINER
  *============================================================================*/
 
@@ -198,5 +236,20 @@ void cg_sequential_zero_grad(cg_sequential* seq);
  */
 int cg_sequential_num_params(cg_sequential* seq);
 cg_tensor** cg_sequential_get_params(cg_sequential* seq);
+
+/*============================================================================
+ * COMPUTATIONAL GRAPH (for explicit autograd)
+ *============================================================================*/
+
+void cg_graph_init(void);
+void cg_graph_reset(void);
+bool cg_graph_is_active(void);
+void cg_graph_register(cg_tensor* t, cg_tensor** parents, int num_parents);
+void cg_graph_backward(cg_tensor* loss);
+
+/* Graph-aware operations */
+cg_tensor* cg_graph_add(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_graph_mul(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_graph_matmul(cg_tensor* a, cg_tensor* b);
 
 #endif /* CG_LAYERS_H */

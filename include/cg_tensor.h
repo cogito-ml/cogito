@@ -250,4 +250,32 @@ void cg_tensor_reshape(cg_tensor* t, int* new_shape, int new_ndim);
  */
 bool cg_tensor_shape_equal(cg_tensor* a, cg_tensor* b);
 
+/*============================================================================
+ * BROADCASTING OPERATIONS
+ *============================================================================*/
+
+/**
+ * Check if two shapes are broadcastable and compute output shape.
+ */
+bool cg_broadcast_shapes(int* shape_a, int ndim_a, int* shape_b, int ndim_b,
+                         int* out_shape, int* out_ndim);
+
+/**
+ * Broadcasted element-wise operations (allocates new tensor).
+ */
+cg_tensor* cg_tensor_add_broadcast(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_tensor_sub_broadcast(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_tensor_mul_broadcast(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_tensor_div_broadcast(cg_tensor* a, cg_tensor* b);
+
+/**
+ * Stack multiple tensors along a new first dimension.
+ */
+cg_tensor* cg_tensor_stack(cg_tensor** tensors, int count);
+
+/**
+ * Concatenate tensors along an existing dimension.
+ */
+cg_tensor* cg_tensor_cat(cg_tensor** tensors, int count, int dim);
+
 #endif /* CG_TENSOR_H */

@@ -114,4 +114,58 @@ void cg_data_iter_reset(cg_data_iter* iter, unsigned int seed);
  */
 void cg_data_iter_free(cg_data_iter* iter);
 
+/*============================================================================
+ * DATALOADER
+ *============================================================================*/
+
+typedef struct cg_dataloader cg_dataloader;
+
+/**
+ * Create a new DataLoader for batched iteration.
+ */
+cg_dataloader* cg_dataloader_new(cg_tensor* data, cg_tensor* labels,
+                                  int batch_size, bool shuffle, unsigned int seed);
+
+/**
+ * Get next batch from DataLoader.
+ * Allocates new tensors for batch_data and batch_labels.
+ * Returns false when epoch is complete.
+ */
+bool cg_dataloader_next(cg_dataloader* loader, cg_tensor** batch_data, 
+                         cg_tensor** batch_labels, int* actual_batch_size);
+
+/**
+ * Reset DataLoader for new epoch.
+ */
+void cg_dataloader_reset(cg_dataloader* loader);
+
+/**
+ * Get number of batches in DataLoader.
+ */
+int cg_dataloader_num_batches(cg_dataloader* loader);
+
+/**
+ * Free DataLoader (does not free underlying data).
+ */
+void cg_dataloader_free(cg_dataloader* loader);
+
+/*============================================================================
+ * UTILITY FUNCTIONS
+ *============================================================================*/
+
+/**
+ * One-hot encode labels.
+ */
+cg_tensor* cg_tensor_onehot(cg_tensor* labels, int num_classes);
+
+/**
+ * Get argmax for a sample in a batch.
+ */
+int cg_tensor_argmax(cg_tensor* t, int sample_idx, int num_classes);
+
+/**
+ * Compute classification accuracy.
+ */
+float cg_compute_accuracy(cg_tensor* logits, cg_tensor* labels, int num_classes);
+
 #endif /* CG_DATASETS_H */

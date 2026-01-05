@@ -32,11 +32,15 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # Collect source files
 set(COGITO_SOURCES
     src/utils/arena.c
+    src/utils/dataloader.c
     src/core/tensor.c
     src/core/tensor_ops.c
     src/core/autograd.c
+    src/core/graph.c
+    src/core/broadcast.c
     src/layers/linear.c
     src/layers/activations.c
+    src/layers/conv2d.c
     src/layers/loss.c
     src/optim/sgd.c
     src/optim/adam.c

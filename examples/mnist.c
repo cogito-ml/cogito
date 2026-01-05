@@ -1,186 +1,313 @@
 /**
- * MNIST Example - Train a neural network on MNIST digits
+ * MNIST MLP Example - Train a simple MLP on MNIST digits (or synthetic data)
  * 
- * Network: 784 -> 128 -> 64 -> 10
- * Requires MNIST dataset files in current directory.
+ * Architecture: 784 -> 128 -> 64 -> 10
  */
 
 #include "cogito.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
 #include <time.h>
 
-#define BATCH_SIZE 64
-#define EPOCHS 5
-#define LEARNING_RATE 0.001f
-
-int compute_accuracy(cg_tensor* pred, cg_tensor* labels) {
-    int correct = 0;
-    int batch_size = pred->shape[0];
-    int num_classes = pred->shape[1];
-    
-    for (int b = 0; b < batch_size; b++) {
-        int pred_class = 0;
-        float max_val = pred->data[b * num_classes];
-        for (int c = 1; c < num_classes; c++) {
-            if (pred->data[b * num_classes + c] > max_val) {
-                max_val = pred->data[b * num_classes + c];
-                pred_class = c;
-            }
+/* ReLU in-place */
+static void relu_inplace(float* data, int size, float* mask) {
+    for (int i = 0; i < size; i++) {
+        if (data[i] < 0) {
+            data[i] = 0;
+            if (mask) mask[i] = 0.0f;
+        } else {
+            if (mask) mask[i] = 1.0f;
         }
-        if (pred_class == (int)labels->data[b]) correct++;
     }
-    
-    return correct;
 }
 
-int main(int argc, char** argv) {
-    printf("Cogito MNIST Example\n");
-    printf("====================\n\n");
+/* Softmax cross-entropy loss and gradient */
+static float cross_entropy_loss(float* logits, int* labels, int batch_size, 
+                                int num_classes, float* grad) {
+    float loss = 0.0f;
     
-    /* Default paths */
-    const char* train_images = "train-images.idx3-ubyte";
-    const char* train_labels = "train-labels.idx1-ubyte";
-    const char* test_images = "t10k-images.idx3-ubyte";
-    const char* test_labels = "t10k-labels.idx1-ubyte";
-    
-    if (argc >= 5) {
-        train_images = argv[1];
-        train_labels = argv[2];
-        test_images = argv[3];
-        test_labels = argv[4];
-    }
-    
-    /* Load datasets */
-    printf("Loading MNIST dataset...\n");
-    cg_mnist* train = cg_mnist_load(train_images, train_labels);
-    cg_mnist* test = cg_mnist_load(test_images, test_labels);
-    
-    if (!train || !test) {
-        printf("Error: Could not load MNIST dataset.\n");
-        printf("Please download MNIST files from:\n");
-        printf("  http://yann.lecun.com/exdb/mnist/\n");
-        printf("And place them in the current directory.\n");
-        if (train) cg_mnist_free(train);
-        if (test) cg_mnist_free(test);
-        return 1;
-    }
-    
-    printf("  Train: %d samples\n", train->num_samples);
-    printf("  Test:  %d samples\n\n", test->num_samples);
-    
-    /* Build model: 784 -> 128 -> 64 -> 10 */
-    printf("Building model...\n");
-    cg_sequential* model = cg_sequential_new();
-    cg_sequential_add(model, (cg_layer*)cg_linear_new(784, 128, true));
-    cg_sequential_add(model, (cg_layer*)cg_relu_new());
-    cg_sequential_add(model, (cg_layer*)cg_linear_new(128, 64, true));
-    cg_sequential_add(model, (cg_layer*)cg_relu_new());
-    cg_sequential_add(model, (cg_layer*)cg_linear_new(64, 10, true));
-    
-    printf("  Parameters: %d tensors\n\n", cg_sequential_num_params(model));
-    
-    /* Adam optimizer */
-    cg_adam* optimizer = cg_adam_new_for_sequential(
-        model, LEARNING_RATE, 0.9f, 0.999f, 1e-8f, 0.0f
-    );
-    
-    /* Training loop */
-    printf("Training for %d epochs...\n\n", EPOCHS);
-    
-    clock_t start_time = clock();
-    
-    for (int epoch = 0; epoch < EPOCHS; epoch++) {
-        float total_loss = 0.0f;
-        int total_correct = 0;
-        int num_batches = train->num_samples / BATCH_SIZE;
-        
-        cg_data_iter* iter = cg_data_iter_new(
-            train->images, train->labels, BATCH_SIZE, true, epoch
-        );
-        
-        cg_tensor* batch_x;
-        cg_tensor* batch_y;
-        int batch_idx = 0;
-        
-        while (cg_data_iter_next(iter, &batch_x, &batch_y)) {
-            /* Forward */
-            batch_x->requires_grad = true;
-            cg_tensor* pred = cg_sequential_forward(model, batch_x);
-            
-            /* Loss */
-            cg_tensor* loss = cg_softmax_cross_entropy_loss(pred, batch_y, CG_REDUCTION_MEAN);
-            total_loss += loss->data[0];
-            total_correct += compute_accuracy(pred, batch_y);
-            
-            /* Zero grads */
-            cg_optimizer_zero_grad((cg_optimizer*)optimizer);
-            cg_sequential_zero_grad(model);
-            
-            /* Backward */
-            if (!loss->grad) loss->grad = (float*)calloc(1, sizeof(float));
-            loss->grad[0] = 1.0f;
-            if (loss->backward_fn) loss->backward_fn(loss);
-            cg_sequential_backward(model, pred);
-            
-            /* Update */
-            cg_optimizer_step((cg_optimizer*)optimizer);
-            
-            /* Cleanup */
-            cg_tensor_free(batch_x);
-            cg_tensor_free(batch_y);
-            cg_tensor_release(pred);
-            cg_tensor_release(loss);
-            
-            batch_idx++;
+    for (int b = 0; b < batch_size; b++) {
+        float max_val = logits[b * num_classes];
+        for (int c = 1; c < num_classes; c++) {
+            if (logits[b * num_classes + c] > max_val) {
+                max_val = logits[b * num_classes + c];
+            }
         }
         
-        float avg_loss = total_loss / num_batches;
-        float train_acc = 100.0f * total_correct / (num_batches * BATCH_SIZE);
+        float sum_exp = 0.0f;
+        for (int c = 0; c < num_classes; c++) {
+            sum_exp += expf(logits[b * num_classes + c] - max_val);
+        }
         
-        printf("Epoch %d/%d | Loss: %.4f | Train Acc: %.2f%%\n",
-               epoch + 1, EPOCHS, avg_loss, train_acc);
-        
-        cg_data_iter_free(iter);
+        for (int c = 0; c < num_classes; c++) {
+            float softmax = expf(logits[b * num_classes + c] - max_val) / sum_exp;
+            grad[b * num_classes + c] = softmax;
+            if (c == labels[b]) {
+                loss -= logf(softmax + 1e-10f);
+                grad[b * num_classes + c] -= 1.0f;
+            }
+        }
     }
     
-    clock_t end_time = clock();
-    double elapsed = (double)(end_time - start_time) / CLOCKS_PER_SEC;
-    
-    printf("\nTraining completed in %.2f seconds.\n", elapsed);
-    
-    /* Evaluate on test set */
-    printf("\nEvaluating on test set...\n");
-    
-    int test_correct = 0;
-    int test_batches = test->num_samples / BATCH_SIZE;
-    
-    cg_data_iter* test_iter = cg_data_iter_new(
-        test->images, test->labels, BATCH_SIZE, false, 0
-    );
-    
-    cg_tensor* batch_x;
-    cg_tensor* batch_y;
-    
-    while (cg_data_iter_next(test_iter, &batch_x, &batch_y)) {
-        cg_tensor* pred = cg_sequential_forward(model, batch_x);
-        test_correct += compute_accuracy(pred, batch_y);
-        
-        cg_tensor_free(batch_x);
-        cg_tensor_free(batch_y);
-        cg_tensor_release(pred);
+    loss /= batch_size;
+    for (int i = 0; i < batch_size * num_classes; i++) {
+        grad[i] /= batch_size;
     }
     
-    float test_acc = 100.0f * test_correct / (test_batches * BATCH_SIZE);
-    printf("Test Accuracy: %.2f%%\n", test_acc);
+    return loss;
+}
+
+int main(int argc, char* argv[]) {
+    printf("Cogito MNIST MLP Example\n");
+    printf("========================\n\n");
+    
+    /* Load or create data */
+    const char* train_images = "data/train-images.idx3-ubyte";
+    const char* train_labels = "data/train-labels.idx1-ubyte";
+    
+    printf("Loading MNIST from %s...\n", train_images);
+    cg_mnist* mnist = cg_mnist_load(train_images, train_labels);
+    
+    if (!mnist) {
+        printf("MNIST not found. Using synthetic data (100 samples)...\n\n");
+        
+        int img_shape[] = {100, 784};
+        int lbl_shape[] = {100};
+        mnist = (cg_mnist*)calloc(1, sizeof(cg_mnist));
+        mnist->images = cg_tensor_randn(img_shape, 2, 42, false);
+        mnist->labels = cg_tensor_zeros(lbl_shape, 1, false);
+        mnist->num_samples = 100;
+        
+        for (int i = 0; i < 100; i++) {
+            mnist->labels->data[i] = (float)(i % 10);
+        }
+        
+        /* Normalize */
+        for (int i = 0; i < mnist->images->size; i++) {
+            mnist->images->data[i] = (mnist->images->data[i] + 3.0f) / 6.0f;
+            if (mnist->images->data[i] < 0) mnist->images->data[i] = 0;
+            if (mnist->images->data[i] > 1) mnist->images->data[i] = 1;
+        }
+    }
+    
+    printf("Loaded %d samples\n\n", mnist->num_samples);
+    
+    /* Hyperparams */
+    int batch_size = 32;
+    int epochs = 5;
+    int num_classes = 10;
+    float lr = 0.01f;
+    
+    /* Weight shapes */
+    int in1 = 784, out1 = 128;
+    int in2 = 128, out2 = 64;
+    int in3 = 64, out3 = 10;
+    
+    /* Allocate weights and biases */
+    float* W1 = (float*)malloc(in1 * out1 * sizeof(float));
+    float* b1 = (float*)calloc(out1, sizeof(float));
+    float* W2 = (float*)malloc(in2 * out2 * sizeof(float));
+    float* b2 = (float*)calloc(out2, sizeof(float));
+    float* W3 = (float*)malloc(in3 * out3 * sizeof(float));
+    float* b3 = (float*)calloc(out3, sizeof(float));
+    
+    float* dW1 = (float*)malloc(in1 * out1 * sizeof(float));
+    float* db1 = (float*)malloc(out1 * sizeof(float));
+    float* dW2 = (float*)malloc(in2 * out2 * sizeof(float));
+    float* db2 = (float*)malloc(out2 * sizeof(float));
+    float* dW3 = (float*)malloc(in3 * out3 * sizeof(float));
+    float* db3 = (float*)malloc(out3 * sizeof(float));
+    
+    /* Xavier init */
+    srand(42);
+    for (int i = 0; i < in1 * out1; i++) 
+        W1[i] = ((float)rand() / RAND_MAX - 0.5f) * 2.0f * sqrtf(6.0f / (in1 + out1));
+    for (int i = 0; i < in2 * out2; i++) 
+        W2[i] = ((float)rand() / RAND_MAX - 0.5f) * 2.0f * sqrtf(6.0f / (in2 + out2));
+    for (int i = 0; i < in3 * out3; i++) 
+        W3[i] = ((float)rand() / RAND_MAX - 0.5f) * 2.0f * sqrtf(6.0f / (in3 + out3));
+    
+    /* Allocate intermediate buffers */
+    int max_bs = batch_size;
+    float* h1 = (float*)malloc(max_bs * out1 * sizeof(float));
+    float* mask1 = (float*)malloc(max_bs * out1 * sizeof(float));
+    float* h2 = (float*)malloc(max_bs * out2 * sizeof(float));
+    float* mask2 = (float*)malloc(max_bs * out2 * sizeof(float));
+    float* logits = (float*)malloc(max_bs * out3 * sizeof(float));
+    float* dlogits = (float*)malloc(max_bs * out3 * sizeof(float));
+    float* dh2 = (float*)malloc(max_bs * out2 * sizeof(float));
+    float* dh1 = (float*)malloc(max_bs * out1 * sizeof(float));
+    
+    int num_batches = (mnist->num_samples + batch_size - 1) / batch_size;
+    printf("Training: %d epochs, batch=%d, %d batches/epoch\n\n", epochs, batch_size, num_batches);
+    
+    clock_t start = clock();
+    
+    for (int epoch = 0; epoch < epochs; epoch++) {
+        float epoch_loss = 0.0f;
+        int correct = 0, total = 0;
+        
+        for (int batch = 0; batch < num_batches; batch++) {
+            int bs_start = batch * batch_size;
+            int bs = (bs_start + batch_size > mnist->num_samples) ? 
+                     (mnist->num_samples - bs_start) : batch_size;
+            
+            float* X = mnist->images->data + bs_start * 784;
+            float* Y = mnist->labels->data + bs_start;
+            
+            /* Zero grads */
+            memset(dW1, 0, in1 * out1 * sizeof(float));
+            memset(db1, 0, out1 * sizeof(float));
+            memset(dW2, 0, in2 * out2 * sizeof(float));
+            memset(db2, 0, out2 * sizeof(float));
+            memset(dW3, 0, in3 * out3 * sizeof(float));
+            memset(db3, 0, out3 * sizeof(float));
+            
+            /* Forward: h1 = ReLU(X @ W1 + b1) */
+            for (int b = 0; b < bs; b++) {
+                for (int j = 0; j < out1; j++) {
+                    float sum = b1[j];
+                    for (int k = 0; k < 784; k++) {
+                        sum += X[b * 784 + k] * W1[k * out1 + j];
+                    }
+                    h1[b * out1 + j] = sum;
+                }
+            }
+            relu_inplace(h1, bs * out1, mask1);
+            
+            /* Forward: h2 = ReLU(h1 @ W2 + b2) */
+            for (int b = 0; b < bs; b++) {
+                for (int j = 0; j < out2; j++) {
+                    float sum = b2[j];
+                    for (int k = 0; k < out1; k++) {
+                        sum += h1[b * out1 + k] * W2[k * out2 + j];
+                    }
+                    h2[b * out2 + j] = sum;
+                }
+            }
+            relu_inplace(h2, bs * out2, mask2);
+            
+            /* Forward: logits = h2 @ W3 + b3 */
+            for (int b = 0; b < bs; b++) {
+                for (int j = 0; j < out3; j++) {
+                    float sum = b3[j];
+                    for (int k = 0; k < out2; k++) {
+                        sum += h2[b * out2 + k] * W3[k * out3 + j];
+                    }
+                    logits[b * out3 + j] = sum;
+                }
+            }
+            
+            /* Loss */
+            int labels_int[64];
+            for (int i = 0; i < bs; i++) labels_int[i] = (int)Y[i];
+            float loss = cross_entropy_loss(logits, labels_int, bs, out3, dlogits);
+            epoch_loss += loss;
+            
+            /* Accuracy */
+            for (int b = 0; b < bs; b++) {
+                int pred = 0;
+                float max_val = logits[b * out3];
+                for (int c = 1; c < out3; c++) {
+                    if (logits[b * out3 + c] > max_val) {
+                        max_val = logits[b * out3 + c];
+                        pred = c;
+                    }
+                }
+                if (pred == labels_int[b]) correct++;
+                total++;
+            }
+            
+            /* Backward: dW3 = h2^T @ dlogits, db3 = sum(dlogits), dh2 = dlogits @ W3^T */
+            for (int k = 0; k < out2; k++) {
+                for (int j = 0; j < out3; j++) {
+                    float sum = 0;
+                    for (int b = 0; b < bs; b++) {
+                        sum += h2[b * out2 + k] * dlogits[b * out3 + j];
+                    }
+                    dW3[k * out3 + j] = sum;
+                }
+            }
+            for (int j = 0; j < out3; j++) {
+                float sum = 0;
+                for (int b = 0; b < bs; b++) sum += dlogits[b * out3 + j];
+                db3[j] = sum;
+            }
+            for (int b = 0; b < bs; b++) {
+                for (int k = 0; k < out2; k++) {
+                    float sum = 0;
+                    for (int j = 0; j < out3; j++) {
+                        sum += dlogits[b * out3 + j] * W3[k * out3 + j];
+                    }
+                    dh2[b * out2 + k] = sum * mask2[b * out2 + k];
+                }
+            }
+            
+            /* Backward: dW2, db2, dh1 */
+            for (int k = 0; k < out1; k++) {
+                for (int j = 0; j < out2; j++) {
+                    float sum = 0;
+                    for (int b = 0; b < bs; b++) {
+                        sum += h1[b * out1 + k] * dh2[b * out2 + j];
+                    }
+                    dW2[k * out2 + j] = sum;
+                }
+            }
+            for (int j = 0; j < out2; j++) {
+                float sum = 0;
+                for (int b = 0; b < bs; b++) sum += dh2[b * out2 + j];
+                db2[j] = sum;
+            }
+            for (int b = 0; b < bs; b++) {
+                for (int k = 0; k < out1; k++) {
+                    float sum = 0;
+                    for (int j = 0; j < out2; j++) {
+                        sum += dh2[b * out2 + j] * W2[k * out2 + j];
+                    }
+                    dh1[b * out1 + k] = sum * mask1[b * out1 + k];
+                }
+            }
+            
+            /* Backward: dW1, db1 */
+            for (int k = 0; k < in1; k++) {
+                for (int j = 0; j < out1; j++) {
+                    float sum = 0;
+                    for (int b = 0; b < bs; b++) {
+                        sum += X[b * in1 + k] * dh1[b * out1 + j];
+                    }
+                    dW1[k * out1 + j] = sum;
+                }
+            }
+            for (int j = 0; j < out1; j++) {
+                float sum = 0;
+                for (int b = 0; b < bs; b++) sum += dh1[b * out1 + j];
+                db1[j] = sum;
+            }
+            
+            /* SGD update */
+            for (int i = 0; i < in1 * out1; i++) W1[i] -= lr * dW1[i];
+            for (int i = 0; i < out1; i++) b1[i] -= lr * db1[i];
+            for (int i = 0; i < in2 * out2; i++) W2[i] -= lr * dW2[i];
+            for (int i = 0; i < out2; i++) b2[i] -= lr * db2[i];
+            for (int i = 0; i < in3 * out3; i++) W3[i] -= lr * dW3[i];
+            for (int i = 0; i < out3; i++) b3[i] -= lr * db3[i];
+        }
+        
+        printf("Epoch %d/%d | Loss: %.4f | Accuracy: %.2f%%\n",
+               epoch + 1, epochs, epoch_loss / num_batches, 100.0f * correct / total);
+    }
+    
+    printf("\nTraining time: %.2f sec\n", (double)(clock() - start) / CLOCKS_PER_SEC);
     
     /* Cleanup */
-    cg_data_iter_free(test_iter);
-    cg_mnist_free(train);
-    cg_mnist_free(test);
-    cg_sequential_free(model);
-    cg_optimizer_free((cg_optimizer*)optimizer);
+    free(W1); free(b1); free(W2); free(b2); free(W3); free(b3);
+    free(dW1); free(db1); free(dW2); free(db2); free(dW3); free(db3);
+    free(h1); free(mask1); free(h2); free(mask2);
+    free(logits); free(dlogits); free(dh2); free(dh1);
+    cg_mnist_free(mnist);
     
-    printf("\nDone!\n");
+    printf("Done!\n");
     return 0;
 }
