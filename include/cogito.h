@@ -21,6 +21,11 @@
 #include "cg_bf16.h"
 #include "cg_pipeline.h"
 
+/* CUDA/GPU support */
+#include "cg_cuda.h"
+#include "cg_tensor_kernels.h"
+#include "cg_flash_attn_kernels.h"
+
 /* Version information */
 #define COGITO_VERSION_MAJOR 0
 #define COGITO_VERSION_MINOR 1

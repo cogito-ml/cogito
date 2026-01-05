@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build-cuda/
 *.lib
 *.exe
 *.obj
