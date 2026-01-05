@@ -56,7 +56,7 @@ static void relu_backward(cg_layer* self, cg_tensor* grad_output) {
     
     /* Backward: grad_input = grad_output * mask */
     for (int i = 0; i < grad_output->size; i++) {
-        input->grad[i] += grad_output->data[i] * relu->mask->data[i];
+        input->grad[i] += grad_output->grad[i] * relu->mask->data[i];
     }
 }
 
@@ -120,7 +120,7 @@ static void sigmoid_backward(cg_layer* self, cg_tensor* grad_output) {
     /* Backward: grad_input = grad_output * sigmoid(x) * (1 - sigmoid(x)) */
     for (int i = 0; i < grad_output->size; i++) {
         float s = output->data[i];
-        input->grad[i] += grad_output->data[i] * s * (1.0f - s);
+        input->grad[i] += grad_output->grad[i] * s * (1.0f - s);
     }
 }
 
@@ -177,7 +177,7 @@ static void tanh_backward(cg_layer* self, cg_tensor* grad_output) {
     /* Backward: grad_input = grad_output * (1 - tanh(x)^2) */
     for (int i = 0; i < grad_output->size; i++) {
         float t = output->data[i];
-        input->grad[i] += grad_output->data[i] * (1.0f - t * t);
+        input->grad[i] += grad_output->grad[i] * (1.0f - t * t);
     }
 }
 
@@ -265,7 +265,7 @@ static void softmax_backward(cg_layer* self, cg_tensor* grad_output) {
      */
     for (int b = 0; b < batch_size; b++) {
         float* s = output->data + b * num_classes;
-        float* g = grad_output->data + b * num_classes;
+        float* g = grad_output->grad + b * num_classes;
         float* dx = input->grad + b * num_classes;
         
         /* Compute dot product: sum(grad * softmax) */
@@ -353,11 +353,11 @@ static void dropout_backward(cg_layer* self, cg_tensor* grad_output) {
     
     if (dropout->training && dropout->mask) {
         for (int i = 0; i < grad_output->size; i++) {
-            input->grad[i] += grad_output->data[i] * dropout->mask->data[i];
+            input->grad[i] += grad_output->grad[i] * dropout->mask->data[i];
         }
     } else {
         for (int i = 0; i < grad_output->size; i++) {
-            input->grad[i] += grad_output->data[i];
+            input->grad[i] += grad_output->grad[i];
         }
     }
 }
@@ -487,7 +487,7 @@ static void batchnorm_backward(cg_layer* self, cg_tensor* grad_output) {
         for (int f = 0; f < num_features; f++) {
             float sum = 0.0f;
             for (int b = 0; b < batch_size; b++) {
-                sum += grad_output->data[b * num_features + f] *
+                sum += grad_output->grad[b * num_features + f] *
                        bn->input_normalized->data[b * num_features + f];
             }
             self->weights->grad[f] += sum;
@@ -498,7 +498,7 @@ static void batchnorm_backward(cg_layer* self, cg_tensor* grad_output) {
         for (int f = 0; f < num_features; f++) {
             float sum = 0.0f;
             for (int b = 0; b < batch_size; b++) {
-                sum += grad_output->data[b * num_features + f];
+                sum += grad_output->grad[b * num_features + f];
             }
             self->bias->grad[f] += sum;
         }
@@ -519,14 +519,14 @@ static void batchnorm_backward(cg_layer* self, cg_tensor* grad_output) {
             
             for (int b = 0; b < batch_size; b++) {
                 int idx = b * num_features + f;
-                sum_dout += grad_output->data[idx];
-                sum_dout_xnorm += grad_output->data[idx] * bn->input_normalized->data[idx];
+                sum_dout += grad_output->grad[idx];
+                sum_dout_xnorm += grad_output->grad[idx] * bn->input_normalized->data[idx];
             }
             
             /* dx = gamma * std_inv * (dout - mean(dout) - x_norm * mean(dout * x_norm)) / n */
             for (int b = 0; b < batch_size; b++) {
                 int idx = b * num_features + f;
-                float dout = grad_output->data[idx];
+                float dout = grad_output->grad[idx];
                 float x_norm = bn->input_normalized->data[idx];
                 
                 input->grad[idx] += gamma * std_inv * 

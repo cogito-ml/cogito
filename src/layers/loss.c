@@ -112,31 +112,64 @@ cg_tensor* cg_bce_loss(cg_tensor* pred, cg_tensor* target, cg_reduction red) {
     return loss;
 }
 
-cg_tensor* cg_bce_with_logits_loss(cg_tensor* logits, cg_tensor* target, cg_reduction red) {
-    cg_tensor* pred = cg_tensor_new(logits->shape, logits->ndim, false);
-    for (int i = 0; i < logits->size; i++) pred->data[i] = 1.0f/(1.0f+expf(-logits->data[i]));
-    return cg_bce_loss(pred, target, red);
+/* L1 Context */
+typedef struct { cg_tensor* pred; cg_tensor* target; cg_reduction red; } l1_ctx;
+
+static void l1_backward(cg_tensor* self) {
+    l1_ctx* c = (l1_ctx*)self->backward_ctx;
+    if (!c->pred->grad) return;
+    float scale = (c->red == CG_REDUCTION_MEAN) ? 1.0f/c->pred->size : 1.0f;
+    for (int i = 0; i < c->pred->size; i++) {
+        float diff = c->pred->data[i] - c->target->data[i];
+        float grad = (diff > 0) ? 1.0f : (diff < 0 ? -1.0f : 0.0f);
+        c->pred->grad[i] += grad * scale * self->grad[0];
+    }
 }
 
-/* L1 */
 cg_tensor* cg_l1_loss(cg_tensor* pred, cg_tensor* target, cg_reduction red) {
     int shape[] = {1};
-    cg_tensor* loss = cg_tensor_new(shape, 1, false);
+    cg_tensor* loss = cg_tensor_new(shape, 1, pred->requires_grad);
     float sum = 0;
     for (int i = 0; i < pred->size; i++) sum += fabsf(pred->data[i] - target->data[i]);
     loss->data[0] = (red == CG_REDUCTION_MEAN) ? sum/pred->size : sum;
+    if (pred->requires_grad) {
+        l1_ctx* c = malloc(sizeof(l1_ctx));
+        c->pred = pred; c->target = target; c->red = red;
+        loss->backward_ctx = c; loss->backward_fn = l1_backward;
+        loss->parents[0] = pred; loss->num_parents = 1; cg_tensor_retain(pred);
+    }
     return loss;
 }
 
-/* Smooth L1 */
-cg_tensor* cg_smooth_l1_loss(cg_tensor* pred, cg_tensor* target, float beta, cg_reduction red) {
-    int shape[] = {1};
-    cg_tensor* loss = cg_tensor_new(shape, 1, false);
-    float sum = 0;
-    for (int i = 0; i < pred->size; i++) {
-        float d = fabsf(pred->data[i] - target->data[i]);
-        sum += (d < beta) ? 0.5f*d*d/beta : d - 0.5f*beta;
+/* BCE with logits Context */
+typedef struct { cg_tensor* logits; cg_tensor* target; cg_reduction red; } bce_logits_ctx;
+
+static void bce_logits_backward(cg_tensor* self) {
+    bce_logits_ctx* c = (bce_logits_ctx*)self->backward_ctx;
+    if (!c->logits->grad) return;
+    float scale = (c->red == CG_REDUCTION_MEAN) ? 1.0f/c->logits->size : 1.0f;
+    for (int i = 0; i < c->logits->size; i++) {
+        // sigmoid(x) - target
+        float s = 1.0f / (1.0f + expf(-c->logits->data[i]));
+        c->logits->grad[i] += (s - c->target->data[i]) * scale * self->grad[0];
     }
-    loss->data[0] = (red == CG_REDUCTION_MEAN) ? sum/pred->size : sum;
+}
+
+cg_tensor* cg_bce_with_logits_loss(cg_tensor* logits, cg_tensor* target, cg_reduction red) {
+    int shape[] = {1};
+    cg_tensor* loss = cg_tensor_new(shape, 1, logits->requires_grad);
+    float tot = 0;
+    for (int i = 0; i < logits->size; i++) {
+        float x = logits->data[i], t = target->data[i];
+        // Stable BCE with logits: max(x,0) - x*t + log(1 + exp(-|x|))
+        tot += fmaxf(x, 0.0f) - x * t + logf(1.0f + expf(-fabsf(x)));
+    }
+    loss->data[0] = (red == CG_REDUCTION_MEAN) ? tot/logits->size : tot;
+    if (logits->requires_grad) {
+        bce_logits_ctx* c = malloc(sizeof(bce_logits_ctx));
+        c->logits = logits; c->target = target; c->red = red;
+        loss->backward_ctx = c; loss->backward_fn = bce_logits_backward;
+        loss->parents[0] = logits; loss->num_parents = 1; cg_tensor_retain(logits);
+    }
     return loss;
 }

@@ -123,25 +123,25 @@ static void linear_backward(cg_layer* self, cg_tensor* grad_output) {
                 float sum = 0.0f;
                 for (int b = 0; b < batch_size; b++) {
                     sum += input->data[b * linear->in_features + i] *
-                           grad_output->data[b * linear->out_features + j];
+                           grad_output->grad[b * linear->out_features + j];
                 }
                 self->weights->grad[i * linear->out_features + j] += sum;
             }
         }
     }
     
-    /* Compute bias gradients: db = sum over batch */
+    /* Compute bias gradients */
     if (self->bias && self->bias->grad) {
         for (int j = 0; j < linear->out_features; j++) {
             float sum = 0.0f;
             for (int b = 0; b < batch_size; b++) {
-                sum += grad_output->data[b * linear->out_features + j];
+                sum += grad_output->grad[b * linear->out_features + j];
             }
             self->bias->grad[j] += sum;
         }
     }
     
-    /* Compute input gradients for previous layer: dx = grad_output @ W^T */
+    /* Compute input gradients: dx = grad_output @ W^T */
     if (input->requires_grad && input->grad) {
         /* grad_output: [batch_size, out_features]
          * W: [in_features, out_features]
@@ -152,7 +152,7 @@ static void linear_backward(cg_layer* self, cg_tensor* grad_output) {
             for (int i = 0; i < linear->in_features; i++) {
                 float sum = 0.0f;
                 for (int j = 0; j < linear->out_features; j++) {
-                    sum += grad_output->data[b * linear->out_features + j] *
+                    sum += grad_output->grad[b * linear->out_features + j] *
                            self->weights->data[i * linear->out_features + j];
                 }
                 input->grad[b * linear->in_features + i] += sum;
@@ -178,14 +178,11 @@ static int linear_num_params(cg_layer* self) {
 
 static cg_tensor** linear_get_params(cg_layer* self) {
     cg_linear* linear = (cg_linear*)self;
-    static cg_tensor* params[2];
     
-    params[0] = self->weights;
-    if (self->bias) {
-        params[1] = self->bias;
-    }
+    linear->param_ptrs[0] = self->weights;
+    linear->param_ptrs[1] = self->bias; // Can be NULL, which is fine as num_params handles it
     
-    return params;
+    return linear->param_ptrs;
 }
 
 cg_linear* cg_linear_new(int in_features, int out_features, bool use_bias) {
@@ -251,5 +248,8 @@ void cg_layer_zero_grad(cg_layer* layer) {
     }
     if (layer->bias && layer->bias->grad) {
         memset(layer->bias->grad, 0, layer->bias->size * sizeof(float));
+    }
+    if (layer->input && layer->input->grad) {
+        memset(layer->input->grad, 0, layer->input->size * sizeof(float));
     }
 }

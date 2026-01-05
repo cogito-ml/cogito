@@ -66,6 +66,7 @@ typedef struct {
     cg_layer base;
     int in_features;
     int out_features;
+    cg_tensor* param_ptrs[2]; // Buffer for get_params
 } cg_linear;
 
 /**
@@ -247,9 +248,11 @@ bool cg_graph_is_active(void);
 void cg_graph_register(cg_tensor* t, cg_tensor** parents, int num_parents);
 void cg_graph_backward(cg_tensor* loss);
 
-/* Graph-aware operations */
-cg_tensor* cg_graph_add(cg_tensor* a, cg_tensor* b);
-cg_tensor* cg_graph_mul(cg_tensor* a, cg_tensor* b);
-cg_tensor* cg_graph_matmul(cg_tensor* a, cg_tensor* b);
+/* Autograd operations */
+cg_tensor* cg_add(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_sub(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_mul(cg_tensor* a, cg_tensor* b);
+cg_tensor* cg_matmul(cg_tensor* a, cg_tensor* b);
+void cg_backward(cg_tensor* loss);
 
 #endif /* CG_LAYERS_H */
