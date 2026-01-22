@@ -177,4 +177,91 @@ cg_eagle_draft* cg_eagle_draft_new(void* base_draft) {
     return e;
 }
 
-void cg_eagle_draft_free(cg_eagle_draft* e) { free(e); }
+/*============================================================================
+ * TREE ATTENTION
+ *============================================================================*/
+
+void cg_token_tree_add_token(cg_token_tree* tree, int token, float* probs) {
+    /* Simplified linear addition for now, real tree would track parent pointers */
+    /* Assuming simple expansion for this phase */
+}
+
+cg_tensor* cg_token_tree_to_tensor(cg_token_tree* tree) {
+    /* Flatten tree to tensor of token IDs */
+    int shape[] = {1, tree->depth};
+    cg_tensor* t = cg_tensor_new(shape, 2, false);
+    for(int i=0; i<tree->depth; i++) t->data[i] = (float)tree->tokens[i];
+    return t;
+}
+
+cg_tensor* cg_tree_attention_mask(cg_token_tree* tree, int seqlen) {
+    /* 
+     * Construct 2D attention mask [total_tokens, total_tokens].
+     * Map tree topology to mask: nodes attend to ancestors.
+     */
+    /* Simplified assumption: tree is flattened linear sequence for base case, 
+       or we need branch info */
+    
+    int num_nodes = tree->depth; /* Total nodes in tree */
+    int size = seqlen + num_nodes;
+    int shape[] = {1, 1, size, size};
+    
+    cg_tensor* mask = cg_tensor_new(shape, 4, false);
+    /* Initialize to -inf */
+    for(int i=0; i<mask->size; i++) mask->data[i] = -1e9f;
+    
+    /* Causal diagonal for seqlen */
+    for(int i=0; i<seqlen; i++) {
+        for(int j=0; j<=i; j++) {
+            mask->data[i * size + j] = 0.0f;
+        }
+    }
+    
+    /* Tree nodes attend to prefix + ancestors */
+    /* Since we don't have explicit parent links in struct yet (using simplified flat for now),
+       we assume linear chain for this stub. 
+       In real EAGLE: use tree->branch_points to determine ancestry */
+       
+    for(int i=0; i<num_nodes; i++) {
+        int r = seqlen + i;
+        /* Attend to prefix */
+        for(int j=0; j<seqlen; j++) mask->data[r * size + j] = 0.0f;
+        
+        /* Attend to self and ancestors */
+        /* Linear assumption: attend to all previous nodes in this path */
+        for(int j=0; j<=i; j++) {
+             mask->data[r * size + (seqlen + j)] = 0.0f;
+        }
+    }
+    
+    return mask;
+}
+
+/*============================================================================
+ * EAGLE-STYLE GENERATION
+ *============================================================================*/
+
+cg_token_tree* cg_eagle_generate_tree(cg_eagle_draft* eagle, cg_tensor* input, int max_depth) {
+    cg_token_tree* tree = cg_token_tree_new(max_depth);
+    
+    /* 
+     * EAGLE Algorithm:
+     * 1. Predict feature vector for next step
+     * 2. Decode token from feature
+     * 3. Estimate uncertainty -> decide whether to branch
+     */
+    
+    /* Simulation of tree expansion */
+    for (int i = 0; i < max_depth; i++) {
+        /* In real impl: Run draft model forward, get logits & uncertainty */
+        /* Here: just append a dummy token */
+        tree->tokens[i] = 1; /* Dummy */
+    }
+    
+    return tree;
+}
+
+void cg_eagle_draft_free(cg_eagle_draft* e) {
+    if (!e) return;
+    free(e);
+}

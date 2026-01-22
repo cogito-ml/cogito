@@ -175,6 +175,48 @@ cg_batchnorm* cg_batchnorm_new(int num_features, float epsilon, float momentum);
 void cg_batchnorm_set_training(cg_batchnorm* layer, bool training);
 
 /*============================================================================
+ * RMS NORM (Root Mean Square Layer Normalization)
+ *============================================================================*/
+
+/**
+ * RMSNorm layer: x * weight * rsqrt(mean(x^2) + eps)
+ * (No bias, simpler than LayerNorm, LLaMA standard)
+ */
+typedef struct {
+    cg_layer base;
+    int normalized_shape;
+    float epsilon;
+    
+    /* Learnable parameters */
+    /* weight = base.weights (gamma) */
+    
+    /* Saved for backward */
+    cg_tensor* inv_rms;            /* 1 / sqrt(mean(x^2) + eps) */
+} cg_rmsnorm;
+
+cg_rmsnorm* cg_rmsnorm_new(int normalized_shape, float epsilon);
+
+/*============================================================================
+ * SwiGLU ACTIVATION
+ *============================================================================*/
+
+/**
+ * SwiGLU: Swish(Wx + b) * (Vx + c)
+ * Typically implemented as splitting input tensor in half if linear layer projects double width.
+ * Here we define it as an activation that takes split input or handles the gating.
+ * 
+ * Standard usage in Transformers: 
+ * Gate_Proj (d -> 2*d) -> SwiGLU -> (d)
+ */
+typedef struct {
+    cg_layer base;
+} cg_swiglu;
+
+cg_swiglu* cg_swiglu_new(void);
+/* Helper: computes SwiGLU on a tensor splitting it in last dim */
+cg_tensor* cg_swiglu_forward_split(cg_tensor* input);
+
+/*============================================================================
  * CONV2D LAYER
  *============================================================================*/
 

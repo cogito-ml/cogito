@@ -26,6 +26,58 @@ typedef struct cg_memory_block {
 } cg_memory_block;
 
 /*============================================================================
+ * SUB-BINS FOR COMMON ML SIZES
+ *============================================================================*/
+
+#define CG_SUBBIN_768   768     /* Common embedding sizes */
+#define CG_SUBBIN_1024  1024    /* Common hidden sizes */
+#define CG_SUBBIN_4096  4096    /* Common FFN sizes */
+#define CG_NUM_SUBBINS  3
+
+/* Sub-bin sizes array for lookup */
+static const size_t CG_SUBBIN_SIZES[CG_NUM_SUBBINS] = {
+    CG_SUBBIN_768,
+    CG_SUBBIN_1024,
+    CG_SUBBIN_4096
+};
+
+/*============================================================================
+ * ARENA TYPES FOR SPECIALIZED ALLOCATION
+ *============================================================================*/
+
+typedef enum {
+    CG_ARENA_DEFAULT = 0,       /* General purpose */
+    CG_ARENA_PARAM,             /* Long-lived parameter buffers */
+    CG_ARENA_ACTIVATION,        /* Short-lived activation buffers */
+    CG_ARENA_GRADIENT           /* Frequently cleared gradient buffers */
+} cg_arena_type;
+
+/*============================================================================
+ * BUDDY ALLOCATION FOR COALESCING
+ *============================================================================*/
+
+typedef struct cg_buddy_block {
+    void* ptr;                  /* Base pointer */
+    size_t size;                /* Block size */
+    int order;                  /* log2(size) - MIN_ORDER */
+    bool is_free;
+    struct cg_buddy_block* buddy;   /* Pointer to buddy block */
+    struct cg_buddy_block* next;    /* Next in free list */
+    struct cg_buddy_block* prev;    /* Prev in free list */
+} cg_buddy_block;
+
+#define CG_BUDDY_MIN_ORDER  5   /* Minimum: 32 bytes */
+#define CG_BUDDY_MAX_ORDER  30  /* Maximum: 1GB */
+#define CG_BUDDY_NUM_ORDERS (CG_BUDDY_MAX_ORDER - CG_BUDDY_MIN_ORDER + 1)
+
+typedef struct {
+    cg_buddy_block* free_lists[CG_BUDDY_NUM_ORDERS];  /* Free blocks by order */
+    void* base_ptr;             /* Base of managed region */
+    size_t total_size;          /* Total managed size */
+    size_t allocated;           /* Currently allocated */
+} cg_buddy_allocator;
+
+/*============================================================================
  * MEMORY POOL
  *============================================================================*/
 
@@ -35,7 +87,11 @@ typedef struct cg_memory_block {
 
 typedef struct {
     cg_memory_block* free_list[CG_NUM_BINS];  /* Free blocks by size */
+    cg_memory_block* subbin_list[CG_NUM_SUBBINS];  /* Sub-bins for ML sizes */
     cg_memory_block* all_blocks;               /* All allocated blocks */
+    
+    /* Buddy allocator for coalescing */
+    cg_buddy_allocator* buddy;
     
     /* Statistics */
     size_t total_allocated;
@@ -45,6 +101,8 @@ typedef struct {
     size_t num_frees;
     size_t cache_hits;
     size_t cache_misses;
+    size_t subbin_hits;         /* Hits in sub-bins */
+    size_t buddy_coalesces;     /* Number of buddy coalesces */
 } cg_memory_pool;
 
 /*============================================================================
@@ -99,6 +157,75 @@ void cg_pool_free(cg_memory_pool* pool, void* ptr);
 void cg_pool_trim(cg_memory_pool* pool);
 
 void cg_memory_pool_free(cg_memory_pool* pool);
+
+/*============================================================================
+ * SUB-BIN ALLOCATION API
+ *============================================================================*/
+
+/**
+ * Allocate from sub-bins for common ML sizes.
+ * Returns NULL if size doesn't match a sub-bin.
+ */
+void* cg_pool_alloc_subbin(cg_memory_pool* pool, size_t size);
+
+/**
+ * Check if size matches a sub-bin.
+ */
+int cg_subbin_index(size_t size);
+
+/*============================================================================
+ * ARENA-AWARE ALLOCATION API
+ *============================================================================*/
+
+/**
+ * Allocate from pool with arena type hint.
+ * Uses different allocation strategies based on tensor lifetime patterns.
+ */
+void* cg_pool_alloc_arena(cg_memory_pool* pool, size_t size, cg_arena_type arena);
+
+/**
+ * Free with arena type hint for optimized handling.
+ */
+void cg_pool_free_arena(cg_memory_pool* pool, void* ptr, cg_arena_type arena);
+
+/*============================================================================
+ * BUDDY ALLOCATOR API
+ *============================================================================*/
+
+/**
+ * Create buddy allocator with given region.
+ */
+cg_buddy_allocator* cg_buddy_new(void* base, size_t size);
+
+/**
+ * Allocate from buddy allocator.
+ */
+void* cg_buddy_alloc(cg_buddy_allocator* buddy, size_t size);
+
+/**
+ * Free to buddy allocator (with automatic coalescing).
+ */
+void cg_buddy_free(cg_buddy_allocator* buddy, void* ptr, size_t size);
+
+/**
+ * Free buddy allocator.
+ */
+void cg_buddy_destroy(cg_buddy_allocator* buddy);
+
+/*============================================================================
+ * SLIDING COMPACTION API
+ *============================================================================*/
+
+/**
+ * Perform sliding compaction to eliminate fragmentation gaps.
+ * Moves live allocations to create contiguous free space.
+ */
+void cg_memory_sliding_compact(cg_memory_planner* planner);
+
+/**
+ * Check if sliding compaction is needed (fragmentation > threshold).
+ */
+bool cg_memory_needs_compact(cg_memory_pool* pool, float threshold);
 
 /*============================================================================
  * MEMORY PLANNER API

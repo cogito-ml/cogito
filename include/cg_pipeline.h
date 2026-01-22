@@ -36,16 +36,26 @@ typedef struct {
     void* layers;               /* Layers in this stage */
     int num_layers;
     
-    /* Communication buffers */
-    cg_tensor** send_buffers;   /* Activations to send forward */
-    cg_tensor** recv_buffers;   /* Activations received from previous */
-    cg_tensor** grad_send;      /* Gradients to send backward */
-    cg_tensor** grad_recv;      /* Gradients received from next */
+    /* Communication buffers (Double Buffered: A/B) */
+    cg_tensor** send_buffers_a;   /* Activations to send forward (Set A) */
+    cg_tensor** send_buffers_b;   /* Activations to send forward (Set B) */
+    
+    cg_tensor** recv_buffers_a;   /* Activations received (Set A) */
+    cg_tensor** recv_buffers_b;   /* Activations received (Set B) */
+    
+    cg_tensor** grad_send_a;      /* Gradients to send backward (Set A) */
+    cg_tensor** grad_send_b;      /* Gradients to send backward (Set B) */
+    
+    cg_tensor** grad_recv_a;      /* Gradients received (Set A) */
+    cg_tensor** grad_recv_b;      /* Gradients received (Set B) */
     
     /* Events for synchronization */
     void* compute_event;
-    void* send_event;
-    void* recv_event;
+    void* comm_stream;            /* Dedicated stream for NCCL */
+    void* send_event_a;           /* Event for buffer A send completion */
+    void* send_event_b;           /* Event for buffer B send completion */
+    void* recv_event_a;
+    void* recv_event_b;
 } cg_pipeline_stage;
 
 /*============================================================================

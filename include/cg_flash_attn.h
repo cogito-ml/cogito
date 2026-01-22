@@ -11,13 +11,32 @@
 #include <stdbool.h>
 
 /*============================================================================
- * CONFIGURATION
+ * CONFIGURATION - AUTO-TUNING
  *============================================================================*/
 
-#define FLASH_BLOCK_M 64        /* Query block size */
-#define FLASH_BLOCK_N 64        /* Key/Value block size */
+/* Legacy static defaults (used as fallback) */
+#define FLASH_BLOCK_M_DEFAULT 64
+#define FLASH_BLOCK_N_DEFAULT 64
 #define FLASH_BLOCK_K 64        /* Reduction dimension */
 #define FLASH_WARPS 4           /* Warps per block */
+
+/**
+ * Runtime Flash Attention configuration.
+ * Auto-tuned based on sequence length, head dimension, and hardware.
+ */
+typedef struct {
+    int block_m;            /* Query block size (Br) */
+    int block_n;            /* Key/Value block size (Bc) */
+    int split_k;            /* Split-K factor for backward pass */
+    bool use_persistent;    /* Use persistent kernels for small batches */
+    bool use_register_tile; /* Use register tiling for d_head <= 64 */
+    int num_warps;          /* Warps per thread block */
+    int sm_count;           /* Number of SMs on target GPU */
+} cg_flash_attn_config;
+
+/* Backward compatibility macros */
+#define FLASH_BLOCK_M FLASH_BLOCK_M_DEFAULT
+#define FLASH_BLOCK_N FLASH_BLOCK_N_DEFAULT
 
 typedef enum {
     ATTN_MASK_NONE = 0,
@@ -127,9 +146,11 @@ cg_flash_attn_params* cg_flash_attn_params_new(
 );
 
 /**
- * Compute optimal block sizes based on hardware.
+ * Compute optimal configuration based on hardware and shapes.
+ * Returns config for tile sizes, split-K, and persistent mode.
  */
-void cg_flash_attn_tune_blocks(int d_head, int* block_m, int* block_n);
+cg_flash_attn_config cg_flash_attn_autotune(int seqlen_q, int seqlen_k, 
+                                              int d_head, int sm_count);
 
 /**
  * Compute shared memory requirement.

@@ -11,6 +11,57 @@
 #include <assert.h>
 
 /*============================================================================
+ * SwiGLU ACTIVATION
+ *============================================================================*/
+
+static cg_tensor* swiglu_forward(cg_layer* self, cg_tensor* input) {
+    /* Expects input to be output of [Gate | Value] projection */
+    /* Input shape: [batch, 2 * dim] */
+    
+    return cg_swiglu_forward_split(input);
+}
+
+static void swiglu_backward(cg_layer* self, cg_tensor* grad_output) {
+    /* Explicit backward not implemented yet, relies on autograd */
+}
+
+static void swiglu_free(cg_layer* self) {
+    if (self->input) cg_tensor_release(self->input);
+    if (self->output) cg_tensor_release(self->output);
+    free(self);
+}
+
+cg_tensor* cg_swiglu_forward_split(cg_tensor* input) {
+    int last_dim = input->shape[input->ndim - 1];
+    int half_dim = last_dim / 2;
+    int batch = input->size / last_dim;
+    
+    int out_shape[CG_MAX_DIMS];
+    memcpy(out_shape, input->shape, input->ndim * sizeof(int));
+    out_shape[input->ndim - 1] = half_dim;
+    
+    cg_tensor* out = cg_tensor_new(out_shape, input->ndim, input->requires_grad);
+    
+    for (int b = 0; b < batch; b++) {
+        for (int i = 0; i < half_dim; i++) {
+            float gate = input->data[b * last_dim + i];
+            float val  = input->data[b * last_dim + half_dim + i];
+            float swish_gate = gate / (1.0f + expf(-gate));
+            out->data[b * half_dim + i] = swish_gate * val;
+        }
+    }
+    return out;
+}
+
+cg_swiglu* cg_swiglu_new(void) {
+    cg_swiglu* l = (cg_swiglu*)calloc(1, sizeof(cg_swiglu));
+    l->base.name = "SwiGLU";
+    l->base.forward = swiglu_forward;
+    l->base.free = swiglu_free;
+    return l;
+}
+
+/*============================================================================
  * RELU ACTIVATION
  *============================================================================*/
 

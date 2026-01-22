@@ -27,9 +27,20 @@
 #include "cg_flash_attn_kernels.h"
 
 /* Version information */
-#define COGITO_VERSION_MAJOR 0
-#define COGITO_VERSION_MINOR 1
+/* Version information */
+#define COGITO_VERSION_MAJOR 1
+#define COGITO_VERSION_MINOR 0
 #define COGITO_VERSION_PATCH 0
+
+/* API Stability Freeze */
+#define COGITO_API_VERSION 1
+
+/* Symbol Versioning Macros */
+#ifdef __linux__
+  #define CG_API_VERSIONed(func, ver) __asm__(".symver " #func "," #func "@" #ver)
+#else
+  #define CG_API_VERSIONed(func, ver)
+#endif
 
 /* Error codes */
 typedef enum {

@@ -28,11 +28,45 @@ struct cg_optimizer {
     /* Iteration count (for Adam bias correction) */
     int t;
     
+    /* Mixed Precision & Stability */
+    bool use_mixed_precision;        
+    float loss_scale;                /* Current loss scale factor */
+    int scale_window;                /* Steps since last overflow */
+    float scale_factor;              /* Factor to adjust scale (e.g. 2.0) */
+    int scale_backoff;               /* Steps to wait after overflow */
+    
+    bool use_master_weights;         /* Store FP32 copy of params */
+    cg_tensor** master_params;       /* FP32 master weights */
+    
+    /* Clipping */
+    float max_grad_norm;             /* Pre-scale clipping threshold */
+    
     /* Virtual methods */
     void (*step)(cg_optimizer* self);
     void (*zero_grad)(cg_optimizer* self);
     void (*free)(cg_optimizer* self);
 };
+
+/*============================================================================
+ * MIXED PRECISION API
+ *============================================================================*/
+
+/**
+ * Enable adaptive loss scaling.
+ */
+void cg_optimizer_enable_loss_scaling(cg_optimizer* opt, float init_scale, 
+                                      float factor, int window);
+
+/**
+ * Enable FP32 master weights.
+ */
+void cg_optimizer_enable_master_weights(cg_optimizer* opt);
+
+/**
+ * Update loss scale based on gradient norms.
+ * Returns true if step should be skipped (overflow).
+ */
+bool cg_optimizer_update_scale(cg_optimizer* opt, float grad_norm);
 
 /**
  * Perform one optimization step (update parameters).

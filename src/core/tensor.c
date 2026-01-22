@@ -63,11 +63,73 @@ static void tensor_init(cg_tensor* t, int* shape, int ndim, bool requires_grad) 
 }
 
 /*============================================================================
+ * MEMORY TRACKING
+ *============================================================================*/
+
+typedef struct cg_tensor_node {
+    cg_tensor* tensor;
+    struct cg_tensor_node* next;
+    struct cg_tensor_node* prev;
+} cg_tensor_node;
+
+static struct {
+    cg_tensor_node* head;
+    int count;
+    bool initialized;
+} g_tensor_registry = {0};
+
+static void cg_tensor_track(cg_tensor* t) {
+    cg_tensor_node* node = (cg_tensor_node*)malloc(sizeof(cg_tensor_node));
+    node->tensor = t;
+    node->next = g_tensor_registry.head;
+    node->prev = NULL;
+    if (g_tensor_registry.head) g_tensor_registry.head->prev = node;
+    g_tensor_registry.head = node;
+    g_tensor_registry.count++;
+}
+
+static void cg_tensor_untrack(cg_tensor* t) {
+    cg_tensor_node* curr = g_tensor_registry.head;
+    while (curr) {
+        if (curr->tensor == t) {
+            if (curr->prev) curr->prev->next = curr->next;
+            if (curr->next) curr->next->prev = curr->prev;
+            if (curr == g_tensor_registry.head) g_tensor_registry.head = curr->next;
+            free(curr);
+            g_tensor_registry.count--;
+            return;
+        }
+        curr = curr->next;
+    }
+}
+
+static void cg_report_leaks(void) {
+    if (g_tensor_registry.count > 0) {
+        printf("\n=== MEMORY LEAK REPORT ===\n");
+        printf("%d tensors were not freed:\n", g_tensor_registry.count);
+        cg_tensor_node* curr = g_tensor_registry.head;
+        int limit = 10;
+        while (curr && limit-- > 0) {
+            printf("  Tensor %p (Ref: %d)\n", curr->tensor, curr->tensor->ref_count);
+            cg_tensor_print(curr->tensor, "  Details");
+            curr = curr->next;
+        }
+        if (g_tensor_registry.count > 10) printf("  ... and %d more.\n", g_tensor_registry.count - 10);
+        printf("==========================\n");
+    }
+}
+
+/*============================================================================
  * TENSOR CREATION
  *============================================================================*/
 
 cg_tensor* cg_tensor_new(int* shape, int ndim, bool requires_grad) {
     assert(shape != NULL && ndim > 0 && ndim <= CG_MAX_DIMS);
+    
+    if (!g_tensor_registry.initialized) {
+        atexit(cg_report_leaks);
+        g_tensor_registry.initialized = true;
+    }
     
     cg_tensor* t = (cg_tensor*)calloc(1, sizeof(cg_tensor));
     if (!t) return NULL;
@@ -91,6 +153,7 @@ cg_tensor* cg_tensor_new(int* shape, int ndim, bool requires_grad) {
         t->grad = NULL;
     }
     
+    cg_tensor_track(t);
     return t;
 }
 
@@ -252,6 +315,8 @@ void cg_tensor_release(cg_tensor* t) {
 
 void cg_tensor_free(cg_tensor* t) {
     if (!t) return;
+    
+    cg_tensor_untrack(t);
     
     /* Don't free if allocated from arena */
     if (t->arena) return;

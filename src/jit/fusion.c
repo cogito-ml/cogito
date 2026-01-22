@@ -111,6 +111,119 @@ bool cg_fusion_can_fuse(cg_ir_node* a, cg_ir_node* b) {
 }
 
 /*============================================================================
+ * ADVANCED PATTERN MATCHERS
+ *============================================================================*/
+
+static bool match_layernorm_gelu_linear(cg_ir_graph* graph, int node_idx, int* matched_nodes) {
+    if (node_idx + 2 >= graph->num_nodes) return false;
+
+    /* Check pattern: LN -> GeLU -> Linear */
+    cg_ir_node* ln = graph->nodes[node_idx];
+    if (ln->opcode != OP_FUSED_LAYERNORM) return false;
+    
+    /* Find GeLU user of LN */
+    cg_ir_node* gelu = NULL;
+    for (int i = node_idx + 1; i < graph->num_nodes; i++) {
+        cg_ir_node* node = graph->nodes[i];
+        if (node->opcode == OP_GELU && node->num_inputs > 0 && node->input_ids[0] == ln->output_id) {
+            gelu = node;
+            break;
+        }
+    }
+    if (!gelu) return false;
+    
+    /* Find Linear (Matmul) user of GeLU */
+    cg_ir_node* linear = NULL;
+    for (int i = gelu->id + 1; i < graph->num_nodes; i++) {
+        cg_ir_node* node = graph->nodes[i];
+        if (node->opcode == OP_MATMUL && node->num_inputs > 0 && node->input_ids[0] == gelu->output_id) {
+            linear = node;
+            break;
+        }
+    }
+    if (!linear) return false;
+    
+    matched_nodes[0] = ln->id;
+    matched_nodes[1] = gelu->id;
+    matched_nodes[2] = linear->id;
+    return true;
+}
+
+static bool match_softmax_dropout_residual(cg_ir_graph* graph, int node_idx, int* matched_nodes) {
+    if (node_idx + 2 >= graph->num_nodes) return false;
+    
+    /* Check pattern: Softmax -> Dropout (Mul) -> Residual (Add) */
+    cg_ir_node* sm = graph->nodes[node_idx];
+    if (sm->opcode != OP_SOFTMAX) return false;
+    
+    /* Find Dropout (Mul) user of Softmax */
+    cg_ir_node* drop = NULL;
+    for (int i = node_idx + 1; i < graph->num_nodes; i++) {
+        cg_ir_node* node = graph->nodes[i];
+        if (node->opcode == OP_MUL && node->num_inputs > 0 && node->input_ids[0] == sm->output_id) {
+            drop = node;
+            break;
+        }
+    }
+    if (!drop) return false;
+    
+    /* Find Residual (Add) user of Dropout */
+    cg_ir_node* res = NULL;
+    for (int i = drop->id + 1; i < graph->num_nodes; i++) {
+        cg_ir_node* node = graph->nodes[i];
+        if (node->opcode == OP_ADD && node->num_inputs > 0) {
+            for (int k = 0; k < node->num_inputs; k++) {
+                if (node->input_ids[k] == drop->output_id) {
+                    res = node;
+                    break;
+                }
+            }
+        }
+        if (res) break;
+    }
+    if (!res) return false;
+    
+    matched_nodes[0] = sm->id;
+    matched_nodes[1] = drop->id;
+    matched_nodes[2] = res->id;
+    return true;
+}
+
+static bool match_qkv_rope(cg_ir_graph* graph, int node_idx, int* matched_nodes) {
+    /* Pattern: Matmul (QKV proj) -> Reshape -> RoPE */
+    cg_ir_node* proj = graph->nodes[node_idx];
+    if (proj->opcode != OP_MATMUL) return false;
+    
+    /* Find Reshape */
+    cg_ir_node* reshape = NULL;
+    for (int i = node_idx + 1; i < graph->num_nodes; i++) {
+        cg_ir_node* node = graph->nodes[i];
+        if (node->opcode == OP_RESHAPE && node->num_inputs > 0 && node->input_ids[0] == proj->output_id) {
+            reshape = node;
+            break;
+        }
+    }
+    if (!reshape) return false;
+    
+    /* Find RoPE (simulated as Custom op logic) */
+    cg_ir_node* rope = NULL;
+    for (int i = reshape->id + 1; i < graph->num_nodes; i++) {
+        cg_ir_node* node = graph->nodes[i];
+        /* Often OP_CUSTOM for RoPE */
+        if (node->opcode == OP_CUSTOM && node->num_inputs > 0 && node->input_ids[0] == reshape->output_id) {
+            rope = node;
+            break;
+        }
+    }
+    if (!rope) return false;
+    
+    matched_nodes[0] = proj->id;
+    matched_nodes[1] = reshape->id;
+    matched_nodes[2] = rope->id;
+    return true;
+}
+
+/*============================================================================
  * PATTERN MATCHING
  *============================================================================*/
 
@@ -218,8 +331,46 @@ cg_fusion_group** cg_fusion_find_patterns(cg_ir_graph* graph, int* num_groups) {
         if (fused[i]) continue;
         
         cg_fusion_group* group = NULL;
+        int matched_nodes[8]; /* Temporary storage for node IDs */
         
-        /* Try matmul epilogue fusion */
+        /* 1. Try complex Transformer patterns first */
+        if (match_layernorm_gelu_linear(graph, i, matched_nodes)) {
+            cg_ir_node* nodes[3];
+            for (int k = 0; k < 3; k++) nodes[k] = graph->nodes[matched_nodes[k]];
+            
+            groups[count++] = cg_fusion_group_new(nodes, 3);
+            groups[count-1]->fusion_type = FUSION_CUSTOM;
+            groups[count-1]->kernel_name = strdup("fused_ln_gelu_linear");
+            
+            for (int k = 0; k < 3; k++) fused[matched_nodes[k]] = true;
+            continue;
+        }
+        
+        if (match_softmax_dropout_residual(graph, i, matched_nodes)) {
+            cg_ir_node* nodes[3];
+            for (int k = 0; k < 3; k++) nodes[k] = graph->nodes[matched_nodes[k]];
+            
+            groups[count++] = cg_fusion_group_new(nodes, 3);
+            groups[count-1]->fusion_type = FUSION_CUSTOM;
+            groups[count-1]->kernel_name = strdup("fused_softmax_dropout_res");
+            
+            for (int k = 0; k < 3; k++) fused[matched_nodes[k]] = true;
+            continue;
+        }
+        
+        if (match_qkv_rope(graph, i, matched_nodes)) {
+            cg_ir_node* nodes[3];
+            for (int k = 0; k < 3; k++) nodes[k] = graph->nodes[matched_nodes[k]];
+            
+            groups[count++] = cg_fusion_group_new(nodes, 3);
+            groups[count-1]->fusion_type = FUSION_CUSTOM;
+            groups[count-1]->kernel_name = strdup("fused_qkv_rope");
+            
+            for (int k = 0; k < 3; k++) fused[matched_nodes[k]] = true;
+            continue;
+        }
+
+        /* 2. Try matmul epilogue fusion */
         if (cg_fusion_match_matmul_epilogue(graph, i, &group)) {
             groups[count++] = group;
             for (int j = 0; j < group->num_nodes; j++) {

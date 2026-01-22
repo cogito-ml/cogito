@@ -482,3 +482,40 @@ bool cg_guards_check(cg_shape_specialization* spec, int64_t* bindings,
     }
     return true;
 }
+
+/*============================================================================
+ * SYMBOLIC ERROR REPORTING
+ *============================================================================*/
+
+void cg_symbolic_report_mismatch(cg_symbolic_shape* a, cg_symbolic_shape* b, 
+                                 const char* context) {
+    printf("\n[Symbolic Error] Shape Mismatch in %s\n", context);
+    
+    printf("Shape A: ");
+    cg_shape_print(a);
+    printf("\n");
+    
+    printf("Shape B: ");
+    cg_shape_print(b);
+    printf("\n");
+    
+    /* Find mismatched dimension */
+    int min_ndim = (a->ndim < b->ndim) ? a->ndim : b->ndim;
+    for (int i = 0; i < min_ndim; i++) {
+        /* Check compatibility logic again to pinpoint error */
+        if (!cg_dim_compatible(a->dims[i], b->dims[i])) {
+            printf("Mismatch at dim %d:\n", i);
+            char* s_a = NULL;
+            char* s_b = NULL;
+            
+            if (a->dims[i]->type == DIM_INFERRED) s_a = cg_expr_to_string(a->dims[i]->expr);
+            if (b->dims[i]->type == DIM_INFERRED) s_b = cg_expr_to_string(b->dims[i]->expr);
+            
+            printf("  A[%d]: %s (Type: %d)\n", i, s_a ? s_a : "Direct", a->dims[i]->type);
+            printf("  B[%d]: %s (Type: %d)\n", i, s_b ? s_b : "Direct", b->dims[i]->type);
+            
+            if (s_a) free(s_a);
+            if (s_b) free(s_b);
+        }
+    }
+}

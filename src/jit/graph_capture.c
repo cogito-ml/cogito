@@ -69,6 +69,7 @@ cg_ir_graph* cg_ir_graph_new(void) {
     graph->tensor_capacity = 128;
     graph->tensors = (cg_tensor**)calloc(128, sizeof(cg_tensor*));
     graph->opt_level = 1;
+    graph->shape_hash = 0;
     return graph;
 }
 
@@ -164,6 +165,15 @@ cg_tensor* cg_jit_record_op(cg_ir_opcode op, cg_tensor** inputs, int num_inputs,
     
     ir_graph_add_node(ACTIVE_GRAPH, node);
     
+    /* Update shape hash */
+    uint64_t step_hash = node->opcode;
+    for (int i = 0; i < node->output_ndim; i++) {
+        step_hash = (step_hash * 31) + node->output_shape[i];
+    }
+    /* Simple XOR-rotate mix */
+    if (ACTIVE_GRAPH->num_nodes == 1) ACTIVE_GRAPH->shape_hash = 0;
+    ACTIVE_GRAPH->shape_hash ^= (step_hash << (node->id % 64));
+    
     return output;
 }
 
@@ -198,7 +208,35 @@ void cg_ir_fuse_ops(cg_ir_graph* graph) {
             if (next->num_inputs == 1 && 
                 next->input_ids[0] == node->output_id) {
                 node->can_fuse = true;
+                node->fusion_type = FUSION_VERTICAL;
                 node->fused_with = next;
+            }
+        }
+        
+        /* HORIZONTAL FUSION */
+        /* Check if node and next are independent and compatible */
+        if (node->opcode == next->opcode && 
+            node->output_ndim == next->output_ndim &&
+            !node->can_fuse) {
+            
+            bool independent = true;
+            /* Check if next depends on node */
+            for (int k = 0; k < next->num_inputs; k++) {
+                if (next->input_ids[k] == node->output_id) independent = false;
+            }
+            
+            /* Check shapes match */
+            bool shapes_match = true;
+            for (int k = 0; k < node->output_ndim; k++) {
+                if (node->output_shape[k] != next->output_shape[k]) shapes_match = false;
+            }
+            
+            if (independent && shapes_match) {
+                /* Fuse horizontally: Execute in same loop */
+                node->can_fuse = true;
+                node->fusion_type = FUSION_HORIZONTAL;
+                node->fused_with = next;
+                /* Note: In real implementation, we'd mark this as horizontal fusion type */
             }
         }
     }
@@ -274,6 +312,68 @@ void cg_ir_cse(cg_ir_graph* graph) {
             }
         }
     }
+}
+
+/*============================================================================
+ * VIRTUAL REGISTER ALLOCATION
+ *============================================================================*/
+
+void cg_ir_allocate_registers(cg_ir_graph* graph, int max_regs) {
+    /* 1. Liveness Analysis */
+    int* last_use = (int*)calloc(graph->num_nodes, sizeof(int));
+    for (int i = 0; i < graph->num_nodes; i++) {
+        last_use[i] = i; /* Default last use is definition */
+        cg_ir_node* node = graph->nodes[i];
+        for (int j = 0; j < node->num_inputs; j++) {
+            /* Find producer of input (simplified mapping) */
+            int producer_idx = node->input_ids[j]; 
+            if (producer_idx < i) {
+                last_use[producer_idx] = i;
+            }
+        }
+    }
+    
+    /* 2. Linear Scan Allocation */
+    int* reg_map = (int*)malloc(graph->num_nodes * sizeof(int));
+    bool* reg_busy = (bool*)calloc(max_regs, sizeof(bool));
+    int* reg_owner = (int*)malloc(max_regs * sizeof(int)); // Node index owning reg
+    
+    memset(reg_map, -1, graph->num_nodes * sizeof(int));
+    
+    for (int i = 0; i < graph->num_nodes; i++) {
+        /* Expire old intervals */
+        for (int r = 0; r < max_regs; r++) {
+            if (reg_busy[r]) {
+                int owner = reg_owner[r];
+                if (last_use[owner] < i) {
+                    reg_busy[r] = false; /* Free register */
+                }
+            }
+        }
+        
+        /* Allocate new register */
+        int best_reg = -1;
+        for (int r = 0; r < max_regs; r++) {
+            if (!reg_busy[r]) {
+                best_reg = r;
+                break;
+            }
+        }
+        
+        if (best_reg >= 0) {
+            reg_busy[best_reg] = true;
+            reg_owner[best_reg] = i;
+            reg_map[i] = best_reg;
+        } else {
+            /* Spill to local memory (assign virtual ID > max) */
+            reg_map[i] = i + max_regs; 
+        }
+    }
+    
+    free(last_use);
+    free(reg_map);
+    free(reg_busy);
+    free(reg_owner);
 }
 
 /*============================================================================

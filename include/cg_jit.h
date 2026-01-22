@@ -52,13 +52,24 @@ typedef enum {
     /* Custom */
     OP_FUSED_ATTENTION,
     OP_FUSED_LAYERNORM,
+    
+    /* New Fusion Patterns */
+    OP_FUSED_LAYERNORM_GELU_LINEAR,
+    OP_FUSED_SOFTMAX_DROPOUT_RESIDUAL,
+    OP_FUSED_QKV_ROPE,
+    
     OP_CUSTOM
 } cg_ir_opcode;
 
-/*============================================================================
- * IR NODE
- *============================================================================*/
+/* FUSION TYPES */
+typedef enum {
+    FUSION_NONE = 0,
+    FUSION_VERTICAL,     /* Producer-Consumer fusion (e.g., Add->ReLU) */
+    FUSION_HORIZONTAL,   /* Independent ops with same iteration space */
+    FUSION_CUSTOM        /* Pattern-based fusion (e.g., LayerNorm+GeLU) */
+} cg_fusion_type;
 
+/* IR NODE */
 typedef struct cg_ir_node {
     cg_ir_opcode opcode;
     int id;                      /* Unique node ID */
@@ -79,13 +90,11 @@ typedef struct cg_ir_node {
     /* Scheduling */
     int schedule_order;          /* Topological order */
     bool can_fuse;               /* Can be fused with successor */
+    cg_fusion_type fusion_type;  /* Type of fusion */
     struct cg_ir_node* fused_with;
 } cg_ir_node;
 
-/*============================================================================
- * IR GRAPH
- *============================================================================*/
-
+/*  IR GRAPH */
 typedef struct {
     cg_ir_node** nodes;
     int num_nodes;
@@ -106,10 +115,7 @@ typedef struct {
     int opt_level;               /* 0=none, 1=fuse, 2=reorder, 3=aggressive */
 } cg_ir_graph;
 
-/*============================================================================
- * JIT COMPILER STATE
- *============================================================================*/
-
+/* JIT COMPILER STATE */
 typedef enum {
     JIT_BACKEND_CPU,
     JIT_BACKEND_CUDA,
@@ -137,11 +143,10 @@ typedef struct {
     
     /* Cache key */
     uint64_t shape_hash;         /* For shape-specialized recompilation */
+    uint64_t pattern_hash;       /* Graph topology hash */
 } cg_jit_compiler;
 
-/*============================================================================
- * TRACING API
- *============================================================================*/
+/* TRACING API */
 
 /**
  * Begin tracing mode - all operations recorded to IR graph.
@@ -164,9 +169,7 @@ bool cg_jit_is_tracing(void);
 cg_tensor* cg_jit_record_op(cg_ir_opcode op, cg_tensor** inputs, int num_inputs,
                             void* attributes, size_t attr_size);
 
-/*============================================================================
- * GRAPH OPTIMIZATION
- *============================================================================*/
+/* GRAPH OPTIMIZATION */
 
 /**
  * Optimize IR graph.
@@ -188,9 +191,7 @@ void cg_ir_dce(cg_ir_graph* graph);
  */
 void cg_ir_cse(cg_ir_graph* graph);
 
-/*============================================================================
- * COMPILATION
- *============================================================================*/
+/* COMPILATION */
 
 /**
  * Create JIT compiler for a graph.
@@ -213,9 +214,7 @@ void cg_jit_execute(cg_jit_compiler* compiler, cg_tensor** inputs, int num_input
  */
 void cg_jit_compiler_free(cg_jit_compiler* compiler);
 
-/*============================================================================
- * CODE GENERATION
- *============================================================================*/
+/* CODE GENERATION */
 
 /**
  * Generate C code (for CPU backend).
@@ -232,9 +231,7 @@ char* cg_jit_codegen_cuda(cg_ir_graph* graph);
  */
 void cg_ir_graph_print(cg_ir_graph* graph);
 
-/*============================================================================
- * GRAPH LIFECYCLE
- *============================================================================*/
+/* GRAPH LIFECYCLE */
 
 cg_ir_graph* cg_ir_graph_new(void);
 void cg_ir_graph_free(cg_ir_graph* graph);
